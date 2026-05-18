@@ -1,0 +1,407 @@
+# 2-Day Backend System Design Interview Roadmap
+
+**Overview:** In the next 2 days, focus on mastering core backend design concepts and practicing common system design problems. Prioritize high-impact topics (load balancing, caching, databases, scaling, queues, CDNs, API gateways, rate limiting, microservices, async flows, consistency/availability) and typical design questions. Structure your preparation into concept reviews and mock design sessions, with a clear study schedule, checklists, and quick reference sheets.
+
+## 1. Core System Design Concepts
+
+### Load Balancers  
+- **What & Why:** A **load balancer** sits between clients and servers, distributing incoming traffic to prevent any one server from overload. It ensures even load and high availability by routing requests to healthy servers【8†L58-L61】.  
+- **Key Features:** Can be hardware or software (e.g. AWS ELB, NGINX, HAProxy). It uses algorithms (round-robin, least connections, IP hash, weighted, random) to pick a server【8†L45-L53】. Often supports health checks and **session persistence** (“sticky sessions”) so stateful apps work correctly.  
+- **Example:** A web app with 1000 req/s uses a load balancer to send requests to 5 identical server instances. The LB checks health and only forwards to healthy nodes【8†L58-L61】.  
+- **Interview:** Explain as “traffic director.” Draw `[Clients] → [Load Balancer] → [Servers]`. Mention Layer4 (L4) vs Layer7 (L7) LBs (L4 is faster, L7 adds HTTP features like SSL termination).  
+- **Follow-ups:** “What if a server goes down? How do you do health checks?” (Answer: LB pings servers, removes unhealthy ones). “Why sticky sessions?” (For logged-in users or real-time sessions).  
+- **Common Mistakes:** Ignoring health checks or putting heavy logic in LB. Not planning for LB itself failing (use multiple LBs or anycast).  
+- **Trade-offs:** L7 proxies add latency (SSL decrypt), L4 is simpler but can’t route by URL. Hardware LB may cost more but handle more traffic.  
+
+### Caching  
+- **What & Why:** A **cache** stores frequently-read data in fast memory (Redis, Memcached, CDN) to reduce latency and offload the database【12†L19-L23】【15†L539-L547】. It’s used when the DB is a bottleneck: e.g. user profiles, search results, popular pages.  
+- **Usage Pattern:** Often *cache-aside*: on a read, check cache first; if miss, read DB and populate cache. Use TTLs (time-to-live) to expire stale entries.  
+- **Example:** A profile service caches user data for 5 minutes. Repeated profile views hit cache (ms) instead of DB (tens of ms).  
+- **Interview:** Introduce caching after identifying DB as a bottleneck. Mention patterns (cache-aside, write-through, write-behind, read-through)【15†L539-L547】【12†L14-L17】. Emphasize speed vs complexity: “Caches make reads fast but add consistency challenges”【15†L539-L547】.  
+- **Follow-ups:** “How to invalidate cache on writes?” (Answer: delete or update cache on DB writes). “Thundering herd problem?” (Clients all miss cache, protect with locks or request coalescing).  
+- **Mistakes:** Over-caching volatile data (causing stale data). Using unlimited cache (OOM). Ignoring eviction (set LRU).  
+- **Trade-offs:** A cache improves read performance but sacrifices strict consistency and adds complexity (need TTLs and invalidation)【15†L539-L547】.  
+
+### Redis (In-memory Key-Value Store)  
+- **What & Why:** **Redis** is a fast, in-memory key-value store (also supports lists, sets, hashes, streams)【64†L105-L112】. It’s single-threaded and blazingly fast (hundreds of thousands ops/sec, microsecond reads) because it keeps data in RAM【64†L105-L112】【64†L190-L198】.  
+- **Uses:** Caching (with TTL), distributed locks, pub/sub messaging, session stores, counters, leaderboards, etc. E.g. store a JSON blob of product info under `product:123`.  
+- **Example:** Use Redis to cache session tokens or counters (e.g. like Youtube tracking view counts). For queues, Redis Streams or Pub/Sub can buffer tasks.  
+- **Interview:** Describe Redis as **in-memory cache/store**. Mention *data structures* (strings, lists, sorted sets, etc) for varied use cases【64†L105-L112】【64†L117-L125】. Note it’s usually **eventually persisted**, not fully durable by default (durability vs speed trade-off【64†L105-L112】).  
+- **Follow-ups:** “What happens on Redis failure?” (Use replication for HA, or have fallback DB). “How to handle memory limits?” (Use eviction policies like LRU, set TTLs).  
+- **Mistakes:** Using Redis as the primary DB (you risk data loss if crash). Setting no TTL (cache never evicts).  
+- **Trade-offs:** Great for speed (microseconds)【64†L190-L198】, but lose disk durability unless configured. Scales by sharding keys across nodes (cluster mode)【64†L163-L172】.  
+
+### SQL vs NoSQL Databases  
+- **What & Why:** **SQL databases** (PostgreSQL, MySQL) use fixed schemas, ACID transactions and strong consistency. **NoSQL** (MongoDB, Cassandra, DynamoDB) includes key-value, document, column, or graph stores with flexible schemas and often eventual consistency.  
+- **Use Case:** Choose based on requirements, not buzzwords【26†L163-L172】【26†L174-L183】. For relational data and strong consistency (e.g. payments, transactions), SQL is usually fine (even big companies use MySQL for core data)【26†L174-L183】. For massive scale or specific patterns, pick a NoSQL: e.g. Cassandra for high-write throughput, Elasticsearch for search, DynamoDB/Redis for simple key-value caching【26†L188-L195】.  
+- **Example:** E-commerce might use SQL for orders/inventory (ACID), but use Elasticsearch for product search and Redis for session cache.  
+- **Interview:** Explain that the SQL/NoSQL choice *depends on scale and access patterns*【26†L174-L183】【26†L188-L195】. Always ask “How much data? Read/write ratio? Consistency needs?” as [26] recommends. Avoid outdated clichés (“NoSQL is for scale” is too simplistic).  
+- **Follow-ups:** “Why not just use one DB for everything?” (Polyglot persistence: use best tool per need【26†L211-L219】). “What about schema flexibility?” (NoSQL like MongoDB for evolving data).  
+- **Mistakes:** Assuming NoSQL is automatically better at scale. Forgetting SQL can often scale with sharding/replication. Underestimating joins and queries if using NoSQL without need.  
+- **Trade-offs:** SQL gives strong consistency, complex queries, and mature tools【26†L174-L183】, but can be harder to scale writes. NoSQL scales horizontally and handles large volumes or semi-structured data, but often sacrifices ACID for eventual consistency.  
+
+### Database Indexing  
+- **What & Why:** An **index** is like a book’s index – a separate data structure (usually a B-tree or hash) that allows the DB to find rows without scanning the whole table【21†L49-L53】. Indexing on columns speeds up reads (queries) greatly, especially for large tables.  
+- **Example:** Index the “user_id” column so `WHERE user_id = ?` queries use the index. Index primary keys by default.  
+- **Interview:** Explain “Indexes speed up SELECT queries (especially on large datasets) by cutting search time, but require overhead.” They often ask “Which columns to index and why?” Emphasize using indexes on columns used in WHERE, JOIN, ORDER BY.  
+- **Follow-ups:** “How do indexes affect writes?” (More indexes → slower INSERT/UPDATE because the DB must update each index). “What if you over-index?” (Increases storage and slows writes【21†L107-L110】).  
+- **Mistakes:** Indexing low-cardinality fields (like a boolean) – useless. Forgetting to index foreign keys. Using too many indexes.  
+- **Trade-offs:** A good index dramatically cuts query time; a bad or unnecessary index wastes space and write throughput【21†L107-L110】.  
+
+### Scaling: Horizontal vs Vertical  
+- **Horizontal (Scale-Out):** Add more machines/instances under a load balancer【69†L30-L38】. E.g. put multiple app servers or DB replicas behind the LB. Common and cost-effective at large scale.  
+- **Vertical (Scale-Up):** Upgrade one machine’s CPU/RAM/disk (bigger instance). Simple to implement but limited by hardware【69†L30-L38】【69†L99-L107】.  
+- **Example:** During a sale, e-commerce spins up 5 extra web servers (horizontal). Or, upgrade the main DB server from 16→64 GB RAM (vertical).  
+- **Interview:** Mention horizontal scaling as preferred for scalability (more nodes = more capacity【69†L139-L147】) and redundancy. Vertical scaling is easier initially (just increase machine size) but hits a ceiling【69†L99-L107】.  
+- **Follow-ups:** “What’s easier?” (Vertical is simpler but stops improving once max hardware). “Which to choose?” (Start vertical, then horizontal when needed.)  
+- **Mistakes:** Overrelying on vertical scaling (one machine is SPOF). Ignoring complexity of horizontal (distributed caching, data sync).  
+- **Trade-offs:** Horizontal adds fault tolerance (requests can be handled if one node fails)【69†L139-L147】 but requires handling distributed state. Vertical avoids inter-node coordination but can cause downtime on resize and ultimate hardware limits【69†L99-L107】.  
+
+### CAP Theorem  
+- **What:** In any distributed system, you can only have **two of** the following three: Consistency, Availability, Partition Tolerance【28†L92-L100】. Partition tolerance (handling network splits) is essential in real systems, so often the real choice is **Consistency vs Availability**.  
+- **Consistency (C):** All nodes see the same data at the same time (reads immediately reflect latest writes).  
+- **Availability (A):** Every request gets a response (not an error), though it might be stale.  
+- **Partition Tolerance (P):** The system continues despite network failures between nodes.  
+- **Example:** Two data centers (US & Europe) with user profiles. Under a network partition, either: (A) show old data to Europe (available but stale) or (C) return errors until sync (consistent but unavailable)【28†L132-L142】. Often we prefer availability (silly stale data) over downtime【28†L132-L142】.  
+- **Interview:** Explain CAP briefly, then apply: “If our system must not go down (e.g. social media), we’d favor availability (eventual consistency). But for banking, we’d favor consistency to avoid anomalies【28†L149-L157】.” Use examples (ticket booking: consistency to avoid double-booking【28†L153-L161】; newsfeed: availability, stale ok【28†L168-L175】).  
+- **Follow-ups:** “How do you achieve consistency if you need it?” (Use transactions, sync replicas). “How about for geo-databases?” (Discuss leader/follower or quorum reads/writes).  
+- **Mistakes:** Confusing CAP “consistency” with database ACID consistency【28†L102-L110】. Forgetting partitions happen (P is non-negotiable).  
+- **Trade-offs:** CAP forces you to pick how to handle partitions. NoSQL often chooses Availability (AP) like Cassandra (eventual consistency), while many SQL systems choose Consistency (CP) by sacrificing availability during outages.  
+
+### Replication & Sharding  
+- **Replication:** Make copies of the database to multiple servers.  
+  - **Master-Slave (Primary-Replica):** One primary (write) and multiple read-replicas (slaves)【36†L30-L39】. Writes go to master, reads can be served by replicas. Ensures **high availability** (if one DB fails, others serve data)【76†L189-L197】 and **load balancing** (spread reads)【76†L193-L200】. Used in almost every large system.  
+  - **Master-Master (Multi-Master):** Multiple nodes accept writes (complex conflict resolution).  
+  - **Example:** An e-commerce site writes orders to the master, while thousands of product page views hit read-replicas (to reduce master load)【36†L30-L39】【76†L189-L197】.  
+  - **Trade-offs:** Replication gives redundancy (HA, failover) and scalability (spread load)【76†L189-L197】, but introduces replication lag (eventual consistency), and complexity (failover logic, conflict resolution).  
+- **Sharding (Horizontal Partitioning):** Split a *single table’s* rows across multiple database instances. Each shard holds a subset of data (e.g. user IDs 1–1M on shard A, 1M+ on shard B)【30†L129-L137】【30†L140-L148】.  
+  - This increases capacity beyond one machine (storage and throughput)【30†L139-L144】. 
+  - **Example:** A large orders table is sharded by order ID or customer ID so each DB has fewer rows, making queries faster.  
+  - **Interview:** Emphasize choosing a good shard key: high cardinality (many values), even distribution, aligned with queries【30†L168-L180】. Bad keys (like boolean) create hotspots【30†L168-L176】.  
+  - **Follow-ups:** “How do you route queries?” (Use consistent hashing or a lookup service). “What about rebalancing shards?” (You need to split/merge as data grows, which is hard).  
+  - **Mistakes:** Ignoring cross-shard joins or needing queries that hit all shards. Not planning for re-sharding.  
+  - **Trade-offs:** Sharding scales writes and storage linearly but adds complexity (routing, uneven load, data movement). Replication improves reads/HA but doesn’t increase write throughput. Sharding increases write throughput but loses global consistency.  
+
+### Message Queues (Kafka, RabbitMQ, SQS)  
+- **What & Why:** A **message queue** decouples producers (senders) from consumers (workers) by buffering messages. Producers put tasks/messages into a queue; consumers pull and process them asynchronously【40†L56-L65】. This allows systems to handle high load and survive spikes.  
+- **Key Models:** Point-to-Point (one producer → queue → one consumer) and Pub/Sub (producer → topic → many consumers). Kafka is often used for high-throughput logs/event streaming (pub/sub), RabbitMQ for task queues (point-to-point)【40†L73-L82】.  
+- **Example:** For image uploads, the web server enqueues an “image processing” message; worker nodes consume and resize images. The web server returns immediately (fast user experience) while the work happens asynchronously.  
+- **Interview:** Explain that queues enable **asynchronous, decoupled communication**【40†L56-L65】. Mention key features: durability (persistent logs), “at-least-once” delivery (with ack), dead-letter queues for failures【40†L81-L90】. Draw `[Producer] -> [Queue/Broker] -> [Consumer]`.  
+- **Follow-ups:** “Kafka vs RabbitMQ?” (RabbitMQ for complex routing/task queues; Kafka for large-scale streaming with log retention)【40†L123-L131】. “How to ensure no data loss?” (Use ACKs, persistent logs, replication in Kafka)【40†L123-L131】【40†L127-L132】. “Handling consumer failure?” (Retries, dead-letter queues, scaling consumers).  
+- **Mistakes:** Assuming FIFO: Kafka partitions may not preserve global order【40†L134-L140】. Forgetting idempotence: same message might process twice. Using a queue for real-time sync (queues are best for async tasks).  
+- **Trade-offs:** Queues add latency (consumer handles later) but improve throughput and reliability. You trade immediate consistency for resilience. High-throughput queues (Kafka) need more ops (disk I/O) than lightweight brokers (Redis, Rabbit).  
+
+### CDN (Content Delivery Network)  
+- **What & Why:** A **CDN** is a global network of cache servers (“edge servers”) that store and serve static content (images, videos, CSS/JS) close to users【42†L128-L136】. It reduces latency (lowers RTT) and offloads the origin server【42†L128-L136】.  
+- **Example:** A website hosted in the US will deliver static images to an Indian user from a Mumbai edge server, cutting load time dramatically【42†L128-L136】.  
+- **Interview:** Describe CDN as “geographically distributed caches for static assets.” Draw `[User] -> [Nearest CDN Edge] -> [Origin Server if miss]`. Mention dynamic content may bypass CDN. Key features: geo-routing, cache invalidation (purge stale content), SSL termination at edge, and high availability.  
+- **Follow-ups:** “When not to use a CDN?” (For highly dynamic per-user data). “How to purge cache on updates?” (Via invalidation API, short TTLs on dynamic content).  
+- **Mistakes:** Trying to cache everything (don’t cache personalized responses). Ignoring cache-control headers.  
+- **Trade-offs:** CDN improves read performance and global availability【42†L128-L136】, but adds complexity in cache invalidation and costs.  
+
+### API Gateway  
+- **What & Why:** An **API Gateway** is a single entry point that routes client requests to microservices【44†L92-L100】. Like a hotel front desk: clients don’t need to know internal service URLs; gateway handles routing, auth, rate-limiting, etc.【44†L92-L100】  
+- **Example:** In a microservices app, all traffic flows through the gateway, which checks JWT tokens, applies rate limits, and forwards requests to user-service, order-service, etc.  
+- **Interview:** Explain it as “single choke-point for external requests.” It performs request validation, authentication, SSL termination, rate limiting, logging, and then routes to the appropriate backend【44†L92-L100】【44†L155-L164】. For diagrams, show `[Client] -> [API Gateway (Auth, Rate Limit, Routing)] -> [Service A/B/C]`.  
+- **Follow-ups:** “Why not put auth in each service?” (Centralizing in gateway reduces duplication). “Is gateway a SPOF?” (Use multiple gateways behind a LB).  
+- **Mistakes:** Treating gateway as a magical service bus. It’s usually a lightweight reverse-proxy (Envoy, AWS API Gateway, NGINX).  
+- **Trade-offs:** Gateway adds a tiny bit of latency, but greatly simplifies clients and centralizes cross-cutting concerns.  
+
+### Rate Limiter  
+- **What & Why:** A **rate limiter** restricts how many requests a client can make in a time window, protecting your service from abuse or overload. E.g. “max 100 requests per minute.” Over-limit requests return HTTP 429 (Too Many Requests)【46†L211-L219】.  
+- **Example:** An API gateway might throttle user requests: if a user sends 3 requests per second but limit is 2/sec, the third gets a 429 error【46†L211-L219】.  
+- **Interview:** Mention common algorithms: *Token Bucket* (allows bursts up to bucket size, refills steadily)【48†L472-L480】【48†L492-L495】, *Fixed Window*, *Sliding Window Log/Counter*. Token bucket is widely used (Amazon, Stripe use it)【46†L233-L242】【48†L492-L495】.  
+- **Follow-ups:** “Implementing distributed rate limiting?” (Use a central store like Redis for counters or tokens so all servers share state【48†L513-L518】). “What if we have multiple API servers?” (Have each API instance check a shared Redis).  
+- **Mistakes:** Using local in-memory counters without sync (leads to under-throttling across instances【48†L503-L512】). Not handling clock skews.  
+- **Trade-offs:** Simple limits are easy (fixed windows) but allow bursts at boundaries. More accurate ones use more memory. Using Redis central store adds network overhead but ensures correctness【48†L503-L512】.  
+
+### Microservices Basics  
+- **What & Why:** **Microservices** is an architecture style where an app is split into many small, independently deployable services (each with its own code and possibly its own database)【75†L1-L4】. A **monolith** is a single unified codebase.  
+- **Example:** Netflix started as a monolith, then split into 1000+ microservices (user service, streaming, billing, etc.) to scale development and infrastructure【73†L30-L37】.  
+- **Interview:** Explain that microservices allow teams to deploy and scale parts independently, improving agility and fault isolation. Draw a simple diagram showing two services (e.g. User and Order) with their own databases.  
+- **Follow-ups:** “What are challenges?” (Inter-service communication complexity, distributed transactions, debugging, overhead of many deployments). “When not to use?” (Small projects – start monolith for simplicity).  
+- **Mistakes:** Prematurely microservices-izing a small app. Not handling network issues between services.  
+- **Trade-offs:** Monoliths are simpler initially. Microservices increase operational complexity (service discovery, load balancing between services, monitoring) but offer better scalability and faster deployments【75†L1-L4】.  
+
+### Async/Event-Driven Architecture  
+- **What:** Systems communicate via events/messages rather than direct calls. This often uses message queues or **pub/sub**. It enables loose coupling and resilience.  
+- **Example:** In an event-driven design, when an order is placed, the order-service publishes an “OrderCreated” event. Other services (inventory, shipping, notifications) consume that event asynchronously.  
+- **Interview:** Emphasize decoupling: **producers** emit events, **consumers** subscribe and react. This improves scalability (services can scale independently) and fault tolerance (if consumer is down, events queue up).  
+- **Follow-ups:** “How to ensure event order?” (Partition by key, use sequential processing). “What if an event is missed?” (Durable queues, at-least-once + idempotent consumers).  
+- **Trade-offs:** Event-driven adds eventual consistency. It can be harder to track data flows. But it helps when parts of system need to react to changes independently.  
+
+### Consistency vs Availability (Beyond CAP)  
+- **What:** Discussed under CAP. Also mention **eventual consistency** (system will become consistent given time) vs strong consistency.  
+- **Example:** DNS systems are eventually consistent; social media feeds are eventually consistent – it’s acceptable if a user sees old data briefly.  
+- **Follow-ups:** “How to improve consistency?” (Use synchronous replication, locks, or leader-election). “When to compromise consistency?” (Non-critical data, or use compensating actions).  
+
+### Pagination  
+- **What:** Breaking up large query results into pages. Two main methods: **Offset pagination** (LIMIT/OFFSET in SQL) and **keyset (cursor) pagination**.  
+- **Offset:** Easy: e.g. `LIMIT 10 OFFSET 100`. **Downside:** Very slow for large offsets (DB scans and discards first rows)【52†L31-L38】.  
+- **Keyset (Cursor):** Use a WHERE clause on a unique column (like `WHERE id > last_id LIMIT 10`). Fast for deep pages because it jumps directly to data【52†L31-L38】.  
+- **Interview:** Explain both. For large-scale systems (feeds, logs), keyset is preferred【52†L31-L38】. Use cursors or "created_at > last_time" with index.  
+- **Follow-ups:** “How to handle delete/inserts?” (Keyset pagination can skip or duplicate items if data changes during paging; sometimes use stable ordering column).  
+- **Trade-offs:** Offset is simpler but unscalable at high page numbers. Keyset is faster but can’t easily jump to arbitrary page (only “next” link).  
+
+### WebSockets / Real-Time Protocols  
+- **What:** WebSockets provide a persistent bi-directional TCP connection between client and server (full duplex), enabling real-time messaging. In contrast, HTTP is request-response (pull). WebSockets are native in browsers (HTML5+)【55†L1-L4】.  
+- **Example:** Chat applications, live notifications (stock ticker), multiplayer games use WebSockets. When the server has new data, it can **push** it to the client immediately【55†L1-L4】.  
+- **Interview:** Mention alternatives: HTTP polling/long-polling or Server-Sent Events (SSE). Emphasize WebSocket’s 2-way channel versus SSE (server → client only). Draw a simple bidirectional arrow: `[Client] <====> [Server (WebSocket)]`【55†L1-L4】.  
+- **Follow-ups:** “How to scale WebSockets?” (They are stateful: need sticky sessions or a WebSocket gateway like Socket.IO, and load balance by connection id).  
+- **Trade-offs:** WebSockets increase server resource usage (many open connections) and complicate scaling, but they remove polling overhead and latency.  
+
+### Authentication Basics  
+- **What:** The process of verifying user identity. Common methods: username/password with **sessions** (cookies + server-side store, e.g. in Redis) or **JWT tokens** (stateless signed tokens). OAuth2/OpenID Connect for delegated auth.  
+- **Example:** User logs in → issue a JWT with 15-min validity. Clients include JWT in API calls.  
+- **Interview:** Mention difference: sessions require storing state (less scalable), JWT is stateless (scales well but harder to revoke). Explain short-lived tokens + refresh tokens.  
+- **Follow-ups:** “How to store passwords?” (Hash with salt). “What about multi-factor?” (Not usually deep dive for this role but mention as bonus).  
+- **Mistakes:** Storing plain passwords, using insecure JWT secrets, not renewing tokens, leaving JWTs too long-lived.  
+- **Trade-offs:** Sessions simplify logout (delete server state) but need sync; JWTs are self-contained but require careful invalidation.  
+
+### Monitoring & Logging  
+- **What:** Observability tools (metrics, logs, tracing) to track system health and debug issues.  
+- **Example:** Instrument your services to emit metrics (CPU, latency, QPS) to Prometheus/Grafana; centralize logs (Elasticsearch, CloudWatch). Set alerts on error rates or latency spikes.  
+- **Interview:** Always say you’d include monitoring/alerting. “I’d track key metrics and set alarms.” This shows maturity.  
+- **Follow-ups:** “What logs do you keep?” (Error logs, request IDs for tracing, user actions for analytics). “How to store logs?” (Log shipper to central store; or cloud logging service).  
+- **Mistakes:** “We’ll add monitoring later” – interviewers dislike that. Not using unique request IDs or structured logging.  
+
+### Bottlenecks & Failover  
+- **Bottleneck Identification:** Explain you’d find slowest component (DB, CPU, network, etc.) via load testing or logs.  
+- **Failover:** Design for redundancy: multiple app servers, multiple database replicas, multiple data centers if needed. Use health checks and automated failover (e.g. DNS failover, primary DB switch).  
+- **“What-ifs:** e.g. “If our DB fails, we rely on replicas (promote a replica)” or “cache can serve stale data until DB recovers.” This shows thought on failure modes.  
+
+---
+
+## 2. Answering System Design: Step-by-Step
+
+1. **Clarify Requirements:** Spend 2–3 minutes asking questions. Confirm scope, features, scale (users, requests/sec), latency/SLA targets. (“Is this mobile or web? Peak load? Region distribution?”). Senior interviewers expect this【66†L281-L289】.  
+2. **Estimate Scale:** Rough math for traffic, data size. (e.g. “1M users, 10% daily active, each makes 50 calls/day → ~500K calls/sec peak”). Shows you know ballpark needs【66†L281-L289】【66†L370-L374】.  
+3. **High-Level Architecture:** Draw a block diagram on the whiteboard (or describe via text here). Identify major components: client, LB, API layer, cache, database, storage, third-party services. Explain how data flows and highlight interfaces (REST/gRPC APIs). Summarize design before details.  
+4. **API Design:** Briefly outline key APIs (endpoints, methods, parameters). Use bulleted list: e.g. `POST /login`, `GET /items?page=2`, etc. This shows organized thinking and covers functional reqs.  
+5. **Data Modeling:** Sketch main data entities and storage choices (SQL vs NoSQL, schema sketch). Discuss indexing choices for common queries.  
+6. **Deep Dive Core Components:** Pick 2–3 critical parts (typically the ones under load). E.g. describe caching strategy in detail (key namespaces, TTL, invalidation), or deep dive how the database handles writes (master-shard strategy).  
+7. **Bottlenecks & Scaling:** Identify likely bottlenecks (DB writes, read throughput, network). Explain how to scale them: add read-replicas (read scaling), sharding (write scaling), CDN, queue for async tasks, partition data.  
+8. **Trade-offs & Alternatives:** For each design choice, mention pros/cons. E.g., “Using SQL ensures ACID, but if write volume grows we might sharding, which complicates joins.” This aligns with interviewer criteria【66†L376-L382】.  
+9. **Fault Tolerance:** Discuss failover plans: auto-scaling groups, active-passive DB failover, multiple AZs, caching to survive DB outage (with stale reads).  
+10. **Review Requirements:** Finally, summarize how your design meets the core requirements and non-functional goals (scalability, availability, etc.).  
+
+Throughout, **talk clearly**: “I’m going to assume…”, “Let me restate the requirement…”, “Does this direction make sense?” This shows leadership and invites feedback【66†L311-L314】.
+
+---
+
+## 3. Communication Tips & Senior Phrases
+
+- **Clarify / Paraphrase:** “Just to clarify, we have *X* users and need *Y* throughput. Is that correct?”  
+- **Outline First:** “I’ll first propose a high-level design and then we can dive into details. At a high level…”  
+- **State Assumptions:** “I’ll assume eventual consistency is acceptable for this part to improve availability.”  
+- **Trade-off Language:** “On one hand… On the other hand… We balance X vs Y.” (“On one hand, adding indexes speeds reads but slows writes.”)  
+- **Check Understanding:** “Does that approach make sense? Any parts I should revisit?”  
+- **Summarize:** “In summary, our system uses X for load balancing, Y for caching, Z for database…”  
+- **Use Metrics:** “We’d provision for ~10k requests/sec (5k users * 2 req/s) to ensure headroom.”  
+- **Senior Framing:** “Typically, companies use AWS API Gateway or NGINX as our gateway. For caches, Redis is a common choice.”  
+- **Failure Handling:** “To avoid a SPOF, I’d run this service in multiple availability zones and use a cluster manager.”  
+- **Memory Tricks:** Use acronyms or analogies: CAP, LRU, FIFO, *“RCU” (read-copy-update) trick* for lockless reads if needed.
+
+Remember: **Explain your reasoning out loud.** Interviewers evaluate your thought process more than final answer【66†L370-L374】. Drive the conversation and narrate decisions, don’t just list bullet points. 
+
+---
+
+## 4. Top 10 System Design Scenarios
+
+For each common scenario, address functional/non-functional requirements, APIs, data/storage choices, caching, queues, scaling, bottlenecks, and trade-offs.
+
+### 4.1 URL Shortener (like bit.ly)  
+- **Functional:** Given a long URL, generate a short code; redirect short to original. No auth needed for basics.  
+- **Non-Functional:** High QPS reads (redirects), moderate writes (shortening requests), low latency for redirect, 99.99% availability.  
+- **APIs:** `POST /shorten {url}` returns short code; `GET /{code}` redirects. Perhaps `GET /stats/{code}` for click stats.  
+- **DB:** Schema: map shortCode → longURL, creation date. Use a high-throughput key-value store (NoSQL like DynamoDB or SQL with primary key on code). Write-heavy key generation (often a counter or hash).  
+- **Short Code Generation:** Could be incremental ID encoded (to avoid collisions), or hash of URL (collisions risk), or random string with check for uniqueness. Handle race conditions (e.g. two create same hash).  
+- **Caching:** Cache hot codes in Redis for super-fast redirect lookup (since read QPS is huge). TTL can be long (data rarely changes).  
+- **Scaling:** Split by prefix of code (partition). Use replication (multiple read replicas) for scaling reads.  
+- **Queues:** Not critical here; writes are quick. Could use a queue for asynchronously logging clicks or analytics.  
+- **Bottlenecks:** DB write or ID generation service. Use multiple DB instances if needed. Hot code (very popular URL) should be served from cache/CDN (or anycast).  
+- **Trade-offs:** Simplicity (increment ID ensures no collisions, but guessable codes) vs security (random codes safer). Single database can failover to replica.  
+
+### 4.2 Chat System (e.g. WhatsApp)  
+- **Functional:** Send/receive messages in real-time. Users/clients on phones. Possibly one-on-one and group chats.  
+- **Non-Functional:** Millions of users, messages/sec is high. Low latency delivery. Some durability (store messages). Mobile connectivity (clients connect occasionally).  
+- **APIs/Protocols:** Likely persistent connections (WebSockets or XMPP). E.g. clients connect via WebSocket to messaging servers. Send messages via `SEND {to, content}`.  
+- **Data Storage:** Store messages in a distributed DB (NoSQL for massive writes, or SQL sharded by user ID). Each chat room or user has message history (maybe only recent kept).  
+- **Real-Time Delivery:** Use message broker or push service (e.g. Kafka or in-memory pub/sub). When A sends to B: publish message to B’s queue so the server pushes it to B’s open socket. If B offline, queue it.  
+- **Queue:** A message queue or Kafka topic per chat/thread (or a dynamic pub/sub mechanism).  
+- **Caching:** Not heavy caching (can't cache personal messages). Could cache user presence/status info.  
+- **Scaling:** Partition by user or chat room. Use multiple app servers behind LB. Use stateless app servers and central pub/sub. Employ cluster-wide routing (maybe based on consistent hashing of user ID).  
+- **Offline Handling:** Store undelivered messages in DB or queue until user reconnects.  
+- **Bottlenecks:** The publish-subscribe system and DB writes. Ensure broker throughput (Kafka can handle many writes).  
+- **Trade-offs:** Consistency (message order) vs availability: usually allow slight reordering or delays. Exactly-once vs at-least-once: idempotency in clients (dedup).  
+
+### 4.3 Notification System (e.g. Email/SMS/Push)  
+- **Functional:** Deliver notifications (email, SMS, push) to users based on events. Not chatty, often asynchronous, some delay acceptable.  
+- **Non-Functional:** High message volume (especially email blasts), need retries on failure, near-100% delivery rate.  
+- **APIs:** An internal API: `POST /notify {user_id, type, message}`. Might integrate with 3rd-party (SMTP server, SMS gateway).  
+- **DB:** Minimal – maybe a “notifications” table tracking status. Use NoSQL or SQL to log messages sent.  
+- **Queue:** Core use: Asynchronous processing! Immediately enqueue notifications to workers. Workers (email service, SMS service) pull tasks from queue (e.g. Kafka or SQS) and handle external API calls.  
+- **Caching:** Possibly rate-limit caches (to avoid spamming users).  
+- **Scaling:** Add more worker instances if queue backlog grows. Use multiple broker partitions to parallelize consumption.  
+- **Bottlenecks:** External system rates (email provider limits). Use batching and backoff.  
+- **Trade-offs:** Real-time vs batching: batch similar notifications to one email vs immediate (latency vs cost). Exactly-once vs at-least-once: duplicates OK if idempotent.  
+
+### 4.4 Feed/Timeline (e.g. Facebook Newsfeed)  
+- **Functional:** Show each user a stream of posts from their friends/followees, sorted by recency or relevance. Support pagination (“load more”).  
+- **Non-Functional:** Very high read rate (every time a user opens app), must serve quickly (<100ms ideally). Writes (new posts) high but less frequent per user.  
+- **API:** `GET /newsfeed?user=123&page=5`. Possibly `POST /post` to create.  
+- **DB:** Many approaches:
+  - **Pull model:** Query activity logs on the fly (slow at scale).  
+  - **Push model:** Precompute feeds (fan-out-on-write): when a user posts, push it into each follower’s feed store (fast reads, slow writes). Use a NoSQL (e.g. Cassandra) or search index per user.  
+- **Cache:** Very important. Cache each user’s top feed page in Redis or use a CDN for public timelines.  
+- **Queues:** Use queues to fan-out: posting triggers a message to an “update feeds” service that fans out posts to followers asynchronously (slower write, but fast read afterwards).  
+- **Scaling:** Shard by user ID for feed store. For reads, use heavy caching. For writes, batch small queue jobs.  
+- **Bottlenecks:** “Hot” users with millions of followers (think celebrity). To avoid massive fan-out, do partial pulling or limit fan-out (celeb may update only a few feeds in fan-out, rest on pull).  
+- **Trade-offs:** *Fan-out vs fan-in:* writing vs reading costs. Partial precomputation is common in real systems.  
+
+### 4.5 File Upload System (e.g. image upload)  
+- **Functional:** Accept file uploads (images, videos), store them, provide URLs to access.  
+- **Non-Functional:** Handle large files, ensure durability, scale storage (potentially billions of files), and serve quickly.  
+- **API:** `POST /upload` (multipart form or chunked upload). Returns a file ID or URL. Possibly `GET /files/{id}` or direct static serving.  
+- **Storage:** Use object storage (AWS S3 or similar) instead of DB for file contents. Metadata (owner, timestamps) in a DB table with `file_id → S3 key`.  
+- **Caching/CDN:** Yes – serve static files from a CDN. Uploads might go directly to cloud storage via signed URLs.  
+- **Queues:** Asynchronous processing (e.g. virus scan, thumbnail generation) after upload. These tasks go into a queue.  
+- **Scaling:** The storage auto-scales (S3). App servers can be stateless. Use multi-part upload for large files.  
+- **Bottlenecks:** Upload bandwidth and storage throughput. Mitigate by using pre-signed URLs so clients talk directly to storage.  
+- **Trade-offs:** Trade immediate consistency (list might not show file until processed) vs speed: often accept eventual availability.  
+
+### 4.6 Rate Limiter (Design the Service)  
+- **Functional:** Build a service to enforce rate limits (e.g. per user, per IP, per API key).  
+- **Non-Functional:** High reliability (must never fail-open), low latency (quick check per request).  
+- **API:** Internally: `ALLOW(user, api)` returns allow/block. Possibly integrate into API gateway. Configurable rules (limit X per window Y).  
+- **Design:** Use a centralized store (Redis or in-memory cluster) to track counters/tokens. Implement Token Bucket (common), where each user/IP has a bucket in Redis.  
+- **Scalability:** Partition keys by user range, replicate Redis. Use consistent hashing if multiple limiter nodes.  
+- **Bottlenecks:** Redis can be hot if many keys. Mitigate with sharding keys, or Bloom filter for quick negative (if never above limit, skip detailed check).  
+- **Trade-offs:** Accuracy vs efficiency: fixed windows are simple but allow burst at boundaries; token buckets allow bursts up to a max.  
+
+### 4.7 Basic Payment System  
+- **Functional:** Process payments (charges, refunds). Keep track of transactions.  
+- **Non-Functional:** Extremely strong consistency (no double-charging, no lost money) and auditability. High security (PCI compliance), encryption.  
+- **API:** `POST /charge {user, amount, payment_method}`, `POST /refund`, `GET /transactions`.  
+- **DB:** Use ACID-compliant SQL. Tables: Accounts, Transactions (with status). Possibly use two-phase commit or idempotency keys to avoid duplicate charges.  
+- **Queues:** Payment gateways often use async callbacks. Enqueue receipts or webhook calls.  
+- **Bottlenecks:** External payment gateways’ latency; system should handle gateway timeouts. Use circuit breakers.  
+- **Trade-offs:** Focus consistency and durability over performance. Each operation is heavier (sync write to DB, wait for commit).  
+
+### 4.8 Video Streaming (Basic)  
+- **Functional:** Serve video streams to users on demand (e.g. Netflix). Handle uploads, encoding, delivery.  
+- **Non-Functional:** Massive bandwidth, global users, high availability, minimize latency (start playback quickly).  
+- **Workflow:** Video uploaded → transcode into multiple resolutions (async, queued tasks) → store in object storage (S3).  
+- **Delivery:** Use a CDN for video delivery. Provide streaming protocols (HLS/DASH): manifest file points to CDN URLs of video chunks.  
+- **APIs:** `POST /uploadVideo`, `GET /videos/{id}/manifest.m3u8`, or direct static GET.  
+- **DB:** Store metadata (video ID, user, resolutions available).  
+- **Caching/CDN:** Absolutely required for performance; edge caching of video chunks.  
+- **Bottlenecks:** Encoding can be heavy (use autoscaling or serverless workers). CDN ensures player sees fast throughput.  
+- **Trade-offs:** Storage cost vs performance: many resolutions mean more storage. Adaptive bitrate: more complex but better UX.  
+
+### 4.9 Search/Autocomplete  
+- **Functional:** Given a query prefix, return relevant suggestions (like search terms or products).  
+- **Non-Functional:** Very low latency (<100ms), scale to many concurrent users, frequently updated index.  
+- **Data:** Build an index (e.g. Elasticsearch or Solr). Index fields need to support prefix queries or n-grams.  
+- **APIs:** `GET /autocomplete?q=foo&limit=10`. Possibly track analytics of queries.  
+- **Caching:** Cache popular query results (many people type same prefix). TTL very short (if suggestions change often).  
+- **Scaling:** Search cluster (Elasticsearch) can be sharded by term. Use query cache.  
+- **Bottlenecks:** Index updates can be slow. We might batch updates (near real-time vs exact real-time).  
+- **Trade-offs:** Instant updates vs staleness: often allow a few seconds delay so we don’t reindex every keystroke.  
+
+### 4.10 Analytics/Event Ingestion System  
+- **Functional:** Ingest a high volume of events (clicks, metrics) from clients, and make them queryable (reports, dashboards).  
+- **Non-Functional:** Massive writes (millions/sec), high durability (don’t lose events), eventual query latency (seconds-minutes ok).  
+- **Data Pipeline:** Clients send events to Kafka or Kinesis (high-throughput message broker). Then use stream processors or consumers to aggregate, store in a data warehouse (like BigQuery, Redshift) or time-series DB.  
+- **APIs:** Usually no external API; ingestion happens via SDK/agent or HTTP endpoint (which puts into Kafka). Maybe `GET /stats?user=1&period=...`.  
+- **Storage:** Partition by time/user. Use append-only storage (log, HDFS) for raw events; OLAP store for queries (columnar DB).  
+- **Scaling:** Very parallel: partition events by key (user/session) across Kafka partitions and consumer instances.  
+- **Bottlenecks:** Ingestion (Kafka brokers need enough IO, use compression), and query engine (use caching or pre-aggregation).  
+- **Trade-offs:** Ensure at-least-once ingestion (duplicates filtering later) vs complexity. Consistency not needed in real-time; eventual is fine for analytics.  
+
+---
+
+## 5. Mock Questions & “What-If” Scenarios
+
+- **Interview Qs:** Be ready to diagram and discuss these examples:  
+  - *“Design X system”* follow prompts (the 10 topics above).  
+  - *“Why X or Y tech?”* (e.g. “Why Kafka over RabbitMQ?” – mention throughput and persistence differences【40†L123-L131】).  
+  - *“What if 100× scale?”* Always say how to shard, add nodes, use higher-tier services. E.g. for 100× users, you’d shard the database, add more cache nodes, maybe move to multi-region or cloud auto-scaling.  
+  - *“Database failure?”* Describe failover: if master DB fails, failover to replica; or serve from cache in degraded mode. Have backups and monitors.  
+  - *“Reduce latency?”* Add caching/CDN, reduce network hops, use in-memory stores, optimize queries/indexes, use async pre-computation.  
+  - *“Avoid SPOF?”* Replicate every component (two load balancers, multi-AZ servers, multiple data stores). Use failover clusters.  
+- **Cross-Questions:** After an answer, you may hear “Why did you pick that?” or “Could that be a problem?” For every choice, have a justification and a known trade-off ready (as above).  
+
+**Phrases to Sound Senior:**  
+- “Our frontend will connect to the API layer behind a load balancer, then to service X (maybe show small ASCII diagram if allowed).”  
+- “I’d use a Redis cluster for caching to handle up to ~100k ops/s【64†L190-L198】.”  
+- “We can shard the User table by user_id to scale horizontally and avoid hitting the single node limit【30†L129-L137】.”  
+- “For data safety, we’ll use master-slave replication to ensure high availability【76†L189-L197】.”  
+- “Assuming a typical 95th percentile QPS of N, I’d provision X servers or cache nodes to handle it.”  
+- “To meet the consistency requirement (e.g. for payments) we’d choose CP, otherwise for social feeds we’d lean AP (eventual consistency)【28†L149-L157】【28†L162-L170】.”  
+
+---
+
+## 6. 2-Day Study Timetable
+
+**Day 1:**  
+- **Morning (3h):** Core concepts review.  
+  - Load balancing【8†L58-L61】, caching【15†L539-L547】, Redis【64†L105-L112】, DB indexing【21†L49-L53】, SQL vs NoSQL【26†L174-L183】【26†L188-L195】.  
+- **Midday (2h):** Scaling and consistency.  
+  - Horizontal vs Vertical【69†L30-L38】【69†L99-L107】, CAP theorem【28†L92-L100】, replication【76†L189-L197】, sharding【30†L129-L137】【30†L168-L180】.  
+- **Afternoon (3h):** Networking and services.  
+  - Message queues【40†L56-L65】, CDN【42†L128-L136】, API gateway【44†L92-L100】, rate limiter【46†L211-L219】, microservices【75†L1-L4】.  
+  - Quick review of pagination【52†L31-L38】 and WebSockets【55†L1-L4】.  
+- **Evening (2h):** Practice drawing architectures. Pick 2 of top-10 scenarios and sketch high-level designs on paper/whiteboard. Talk through them out loud.
+
+**Day 2:**  
+- **Morning (3h):** Top-10 system design problems (outline each). Focus on 1–5 (URL shortener, chat, notifications, feed, upload).  
+- **Midday (2h):** Continue scenarios 6–10 (rate limiter, payments, video, search, analytics). Emphasize APIs, DB, cache, queue for each.  
+- **Afternoon (2h):** Mock interview practice. Time yourself explaining one problem end-to-end (45 min). Use the step-by-step process.  
+- **Late Afternoon (2h):** Revise weak spots from mocks. Go over quick crib notes (next section). Brush up on “bottlenecks, failover, reducing latency” answers.  
+- **Evening (1h):** Relax and skim last-minute notes. Get a good night’s rest.
+
+*Note:* Adjust times to fit your schedule. The key is to cover all topics twice (read then active recall).
+
+---
+
+## 7. Revision Checklist
+
+- **Concepts:** LB, cache, Redis, SQL/NoSQL, indexing, horizontal/vertical scaling, CAP, replication, sharding, queues, CDN, API gateway, rate limiter, microservices, async/event-driven, consistency models, pagination, WebSockets, auth, monitoring.  
+- **Diagrams:** Single diagrams to sketch: e.g. load balancer with servers; client–queue–worker; gateway–services; sharded DB; pub/sub model; CDN architecture.  
+- **Algorithms:** Token bucket & sliding window for rate limit; mention LRU for cache eviction.  
+- **Numbers:** Common volumes: e.g. ~100k ops/s for Redis【64†L190-L198】, typical sizes (single machine ~256 TB limit), etc. (Even saying “fast SSDs can handle millions IOPS” can sound savvy).  
+- **Failures:** What happens if each component fails (servers crash, DB down, cache down, network partition). Have an answer ready.  
+- **Phrases:** E.g. “This prevents a single point of failure,” “We should consider eventual consistency if needed,” “Let’s decouple with a queue,” etc.  
+
+---
+
+## 8. Last-Minute Review Sheet
+
+- **Architecture Flow:** Start broad (“Clients → LB → API Gateway → Microservices”). Then add caching layers and databases.  
+- **High-Value Terms:** *SPOF, redundancy, TTL, backpressure, warm-up time, bloom filter, circuit breaker.* Use them if relevant.  
+- **Trade-offs Cheat-Sheet:** 
+  - *SQL vs NoSQL:* ACID vs scale/flexibility【26†L174-L183】.  
+  - *Consistency vs Availability:* (choose per use-case)【28†L149-L157】【28†L162-L170】.  
+  - *Horizontal vs Vertical:* many machines vs one powerful【69†L30-L38】.  
+  - *Cache:* faster reads but stale data risk【15†L539-L547】.  
+  - *Queue:* throughput vs real-time.  
+- **Acronyms & Jargon:** CAP, ACID, LRU, RPS (requests per second), QPS (queries per second), SLA (Service Level Agreement).  
+
+---
+
+## 9. 1-Hour-Before Interview Quick Sheet
+
+- **Mindset:** Speak confidently and clearly. Structure your answer (outline → details).  
+- **Checklist:** Clarify requirements, name assumptions, mention scale numbers, draw basic architecture, articulate trade-offs.  
+- **Key Strategies:** Always start with **why** you choose a component (“to handle X load”, “to decouple Y”). Use analogies if stuck (hotel front desk for gateway, book index for DB index).  
+- **Memory Hacks:** 
+  - CAP → *CAP on it: Consistency, Availability, Partition*. Remember partitions happen, must pick C or A.  
+  - Token Bucket → picture tokens filling and being used up (like coins).  
+  - Redis = “R = Really fast (in-memory)” and loses “is in memory”.  
+- **Stay Calm:** If blank on a detail, explain how you’d find out (e.g. refer to “numbers to know” resources or run quick math).  
+- **Backup Phrases:** “Given more time I’d consider…”, “A common pattern is to…”, “We could also use a CDN as an optimization.”  
+
+Use this hour to **mentally recap** each topic’s gist. You don’t need to cram new info – just ensure big-picture clarity and recall key phrases/trade-offs. Good luck – with focused review and practice, you’ll navigate the interview confidently!  
+
+**Sources:** Best-practice design patterns and advice are drawn from industry interviews and system-design guides【8†L58-L61】【15†L539-L547】【26†L174-L183】【28†L92-L100】【30†L129-L137】【40†L56-L65】【42†L128-L136】【44†L92-L100】【46†L211-L219】【52†L31-L38】【64†L105-L112】【76†L189-L197】【75†L1-L4】. These outline what senior engineers typically discuss and expect.
